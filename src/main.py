@@ -1,10 +1,8 @@
 import os
 import shutil
+import sys
 from textnode import TextNode, TextType
-from blocktypes import markdown_to_html_node  # Assumes this function is defined in blocktypes.py
-
-##############################
-# Existing functions
+from blocktypes import markdown_to_html_node  # Assumes this is defined in blocktypes.py
 
 def copy_static(src, dest):
     """
@@ -28,7 +26,7 @@ def copy_static(src, dest):
 
 def extract_title(markdown):
     """
-    Extracts the h1 header (a line starting with a single '# ') from the markdown text.
+    Extracts the h1 header (a line starting with a single '# ') from the given markdown text.
     Returns the header text with the '#' and any leading/trailing whitespace removed.
     If no h1 header is found, raises an Exception.
     """
@@ -37,86 +35,88 @@ def extract_title(markdown):
             return line[2:].strip()
     raise Exception("No h1 header found in markdown")
 
-def generate_page(from_path, template_path, dest_path):
+def generate_page(from_path, template_path, dest_path, basepath):
     """
-    Reads a markdown file from from_path and a template HTML file from template_path.
-    Uses markdown_to_html_node() to convert the markdown to HTML, and extract_title() to get the page title.
-    Replaces the {{ Title }} and {{ Content }} placeholders in the template with the extracted title and generated HTML.
-    Writes the resulting HTML page to dest_path, creating directories as needed.
+    Generates an HTML page by:
+      - Reading a markdown file from from_path.
+      - Reading a template HTML file from template_path.
+      - Converting the markdown to HTML using markdown_to_html_node().
+      - Extracting the page title from the markdown using extract_title().
+      - Replacing the {{ Title }} and {{ Content }} placeholders in the template.
+      - Then replacing any href="/ and src="/ with the provided basepath.
+      - Writing the resulting HTML to dest_path.
     """
     print(f"Generating page from {from_path} to {dest_path} using {template_path}")
-
+    
     # Read the markdown file.
     with open(from_path, "r", encoding="utf-8") as md_file:
         markdown_content = md_file.read()
-
+    
     # Read the template file.
     with open(template_path, "r", encoding="utf-8") as tpl_file:
         template_content = tpl_file.read()
-
+    
     # Convert markdown to HTML.
     html_node = markdown_to_html_node(markdown_content)
     html_content = html_node.to_html()
-
+    
     # Extract the title.
     title = extract_title(markdown_content)
-
-    # Replace placeholders in the template.
+    
+    # Replace placeholders.
     full_html = template_content.replace("{{ Title }}", title).replace("{{ Content }}", html_content)
-
+    
+    # Update all absolute paths in href and src attributes with the basepath.
+    full_html = full_html.replace('href="/', f'href="{basepath}')
+    full_html = full_html.replace('src="/', f'src="{basepath}')
+    
     # Ensure the destination directory exists.
     dest_dir = os.path.dirname(dest_path)
     if not os.path.exists(dest_dir):
         os.makedirs(dest_dir)
-
-    # Write the final HTML page.
+    
+    # Write the final HTML.
     with open(dest_path, "w", encoding="utf-8") as dest_file:
         dest_file.write(full_html)
-
+    
     print(f"Page generated successfully at {dest_path}")
 
-##############################
-# New: Recursive Page Generator
-
-def generate_pages_recursive(content_dir, template_path, dest_dir):
+def generate_pages_recursive(dir_path_content, template_path, dest_dir_path, basepath):
     """
-    Recursively crawls through the content directory.
-    For every markdown (.md) file found, generate a new .html file in the corresponding path under dest_dir.
+    Recursively crawls the content directory (dir_path_content) and, for every markdown file found,
+    generates an HTML page (using generate_page) in the dest_dir_path directory, preserving the same directory structure.
     """
-    for entry in os.listdir(content_dir):
-        entry_path = os.path.join(content_dir, entry)
-        dest_entry_path = os.path.join(dest_dir, entry)
-        
-        if os.path.isdir(entry_path):
-            # Create the corresponding destination directory if it doesn't exist.
-            if not os.path.exists(dest_entry_path):
-                os.makedirs(dest_entry_path)
-            # Recursively process the subdirectory.
-            generate_pages_recursive(entry_path, template_path, dest_entry_path)
-        elif os.path.isfile(entry_path) and entry.lower().endswith('.md'):
-            # Generate HTML file: replace the .md extension with .html in the destination.
-            dest_html_path = os.path.splitext(dest_entry_path)[0] + ".html"
-            generate_page(entry_path, template_path, dest_html_path)
-
-##############################
-# Main Function
+    for root, dirs, files in os.walk(dir_path_content):
+        for file in files:
+            if file.lower().endswith(".md"):
+                src_file = os.path.join(root, file)
+                # Compute relative path from the content directory.
+                rel_path = os.path.relpath(src_file, dir_path_content)
+                # Change the .md extension to .html.
+                rel_html = os.path.splitext(rel_path)[0] + ".html"
+                dest_file = os.path.join(dest_dir_path, rel_html)
+                print(f"Generating page for {src_file} -> {dest_file}")
+                generate_page(src_file, template_path, dest_file, basepath)
 
 def main():
+    # Get the basepath from command-line arguments; default to "/" if none provided.
+    basepath = sys.argv[1] if len(sys.argv) > 1 else "/"
+    
     project_root = os.getcwd()
-
-    # Step 1: Copy static files from static to public.
     static_dir = os.path.join(project_root, "static")
     public_dir = os.path.join(project_root, "public")
+    content_dir = os.path.join(project_root, "content")
+    template_path = os.path.join(project_root, "template.html")
+    
+    # Step 1: Delete anything in the public directory and copy static files there.
     print("Copying static files...")
     copy_static(static_dir, public_dir)
     
-    # Step 2: Generate pages recursively from the content directory.
-    content_dir = os.path.join(project_root, "content")
-    template_path = os.path.join(project_root, "template.html")
-    # We'll generate pages under the public directory (preserving the structure).
-    print("\nGenerating pages from content...")
-    generate_pages_recursive(content_dir, template_path, public_dir)
-    print("All pages generated successfully!")
+    # Step 2: Generate a page for every markdown file in the content directory.
+    print("Generating pages recursively...")
+    generate_pages_recursive(content_dir, template_path, public_dir, basepath)
+    
+    print("Site generation complete!")
 
 if __name__ == "__main__":
     main()
