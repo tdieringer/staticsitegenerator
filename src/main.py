@@ -1,13 +1,13 @@
 import os
-import shutil
 import sys
+import shutil
 from textnode import TextNode, TextType
-from blocktypes import markdown_to_html_node  # Assumes this is defined in blocktypes.py
+from blocktypes import markdown_to_html_node  # Assumes this function is defined in blocktypes.py
 
 def copy_static(src, dest):
     """
-    Recursively copies all files and subdirectories from src to dest.
-    First, deletes the destination directory if it exists to ensure a clean copy.
+    Recursively copy all files and subdirectories from src to dest.
+    Deletes dest if it exists to ensure a clean copy.
     """
     if os.path.exists(dest):
         print(f"Deleting destination directory: {dest}")
@@ -26,7 +26,7 @@ def copy_static(src, dest):
 
 def extract_title(markdown):
     """
-    Extracts the h1 header (a line starting with a single '# ') from the given markdown text.
+    Extracts the h1 header (a line starting with a single '# ') from the markdown text.
     Returns the header text with the '#' and any leading/trailing whitespace removed.
     If no h1 header is found, raises an Exception.
     """
@@ -37,84 +37,76 @@ def extract_title(markdown):
 
 def generate_page(from_path, template_path, dest_path, basepath):
     """
-    Generates an HTML page by:
-      - Reading a markdown file from from_path.
-      - Reading a template HTML file from template_path.
-      - Converting the markdown to HTML using markdown_to_html_node().
-      - Extracting the page title from the markdown using extract_title().
-      - Replacing the {{ Title }} and {{ Content }} placeholders in the template.
-      - Then replacing any href="/ and src="/ with the provided basepath.
-      - Writing the resulting HTML to dest_path.
+    Reads a markdown file from from_path and a template file from template_path.
+    Converts the markdown to HTML using markdown_to_html_node, extracts the title using extract_title,
+    replaces the {{ Title }} and {{ Content }} placeholders, and also replaces
+    any instances of href="/ with href="{basepath} and src="/ with src="{basepath}.
+    Writes the resulting HTML to dest_path.
     """
     print(f"Generating page from {from_path} to {dest_path} using {template_path}")
     
-    # Read the markdown file.
     with open(from_path, "r", encoding="utf-8") as md_file:
         markdown_content = md_file.read()
     
-    # Read the template file.
     with open(template_path, "r", encoding="utf-8") as tpl_file:
         template_content = tpl_file.read()
     
-    # Convert markdown to HTML.
     html_node = markdown_to_html_node(markdown_content)
     html_content = html_node.to_html()
     
-    # Extract the title.
     title = extract_title(markdown_content)
     
-    # Replace placeholders.
+    # Replace placeholders and update root-relative links
     full_html = template_content.replace("{{ Title }}", title).replace("{{ Content }}", html_content)
+    full_html = full_html.replace('href="/', f'href="{basepath}').replace('src="/', f'src="{basepath}')
     
-    # Update all absolute paths in href and src attributes with the basepath.
-    full_html = full_html.replace('href="/', f'href="{basepath}')
-    full_html = full_html.replace('src="/', f'src="{basepath}')
-    
-    # Ensure the destination directory exists.
     dest_dir = os.path.dirname(dest_path)
     if not os.path.exists(dest_dir):
         os.makedirs(dest_dir)
     
-    # Write the final HTML.
     with open(dest_path, "w", encoding="utf-8") as dest_file:
         dest_file.write(full_html)
     
     print(f"Page generated successfully at {dest_path}")
 
-def generate_pages_recursive(dir_path_content, template_path, dest_dir_path, basepath):
+def generate_pages_recursive(content_dir, template_path, dest_dir, basepath):
     """
-    Recursively crawls the content directory (dir_path_content) and, for every markdown file found,
-    generates an HTML page (using generate_page) in the dest_dir_path directory, preserving the same directory structure.
+    Recursively crawls the content directory.
+    For each markdown (.md) file found, generates a corresponding HTML file
+    in the destination directory (docs) while preserving the directory structure.
     """
-    for root, dirs, files in os.walk(dir_path_content):
-        for file in files:
-            if file.lower().endswith(".md"):
-                src_file = os.path.join(root, file)
-                # Compute relative path from the content directory.
-                rel_path = os.path.relpath(src_file, dir_path_content)
-                # Change the .md extension to .html.
-                rel_html = os.path.splitext(rel_path)[0] + ".html"
-                dest_file = os.path.join(dest_dir_path, rel_html)
-                print(f"Generating page for {src_file} -> {dest_file}")
-                generate_page(src_file, template_path, dest_file, basepath)
+    for entry in os.listdir(content_dir):
+        entry_path = os.path.join(content_dir, entry)
+        if os.path.isdir(entry_path):
+            new_dest_dir = os.path.join(dest_dir, entry)
+            if not os.path.exists(new_dest_dir):
+                os.makedirs(new_dest_dir)
+            generate_pages_recursive(entry_path, template_path, new_dest_dir, basepath)
+        else:
+            if entry.lower().endswith(".md"):
+                dest_filename = os.path.splitext(entry)[0] + ".html"
+                dest_path = os.path.join(dest_dir, dest_filename)
+                print(f"Generating page for {entry_path} -> {dest_path}")
+                generate_page(entry_path, template_path, dest_path, basepath)
 
 def main():
-    # Get the basepath from command-line arguments; default to "/" if none provided.
+    # Get basepath from command-line arguments (default to "/")
     basepath = sys.argv[1] if len(sys.argv) > 1 else "/"
+    print(f"Basepath set to: {basepath}")
     
     project_root = os.getcwd()
     static_dir = os.path.join(project_root, "static")
-    public_dir = os.path.join(project_root, "public")
     content_dir = os.path.join(project_root, "content")
+    docs_dir = os.path.join(project_root, "docs")  # Using docs instead of public
     template_path = os.path.join(project_root, "template.html")
     
-    # Step 1: Delete anything in the public directory and copy static files there.
+    # Step 1: Copy static files into the docs directory
     print("Copying static files...")
-    copy_static(static_dir, public_dir)
+    copy_static(static_dir, docs_dir)
     
-    # Step 2: Generate a page for every markdown file in the content directory.
+    # Step 2: Generate pages recursively from content to docs
     print("Generating pages recursively...")
-    generate_pages_recursive(content_dir, template_path, public_dir, basepath)
+    generate_pages_recursive(content_dir, template_path, docs_dir, basepath)
     
     print("Site generation complete!")
 
